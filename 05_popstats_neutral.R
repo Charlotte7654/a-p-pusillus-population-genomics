@@ -723,100 +723,170 @@ if (!require("dartR", quietly = TRUE))
 library(dartR)
 
 
-#neutral
-populations.structure.neutral.gl<-gi2gl(genind_neutral)
-save(populations.structure.neutral.gl, file = "populations.structure.neutral.gl.RData")
+#neutral 
+#NB ran bootstraps in the HPC - see appropriate scripts 
+#populations.structure.neutral.gl<-gi2gl(genind_neutral)
+#save(populations.structure.neutral.gl, file = "populations.structure.neutral.gl.RData")
 
-stamppFst_values <- stamppFst(populations.structure.gl, nboots = 100, percent = 95, nclusters = 1) #NB takes a long time - saved to computer
+#stamppFst_values <- stamppFst(populations.structure.gl, nboots = 1000, percent = 95, nclusters = 1) #NB takes a long time - saved to computer
 
 # Save the object to a file on your computer
-save(stamppFst_values, file = "stamppFst_values_neutral.RData")
+#save(stamppFst_values, file = "stamppFst_values_neutral.RData")
 
 # Load the saved object from the file
-#load("stamppFst_values.RData")
+load("stamppFst_values_neutral.RData")
 
 options(max.print = 100)
 stamppFst_values
-View(stamppFst_values)
+#View(stamppFst_values)
 
-FST_pvalues<-stamppFst_values[["Pvalues"]]
-FST_pvalues
+# looking at CIs
+# Check the components.
+names(stamppFst_values)
 
-$Fsts
-Cape Cross  False Bay   Kleinzee Lambert's Bay Pelican Point
-Cape Cross             NA         NA         NA            NA            NA
-False Bay     0.014752075         NA         NA            NA            NA
-Kleinzee      0.009573261 0.02044062         NA            NA            NA
-Lambert's Bay 0.023828236 0.03210104 0.01596217            NA            NA
-Pelican Point 0.028625617 0.04191970 0.01983426    0.01527553            NA
+# Extract the bootstrap results.
+bootstrap_results <- stamppFst_values[["Bootstraps"]]
+#View(bootstrap_results)
 
-$Pvalues #I think the decimals are shown as the least necessary 
-Cape Cross False Bay Kleinzee Lambert's Bay Pelican Point
-Cape Cross            NA        NA       NA            NA            NA
-False Bay           0.00        NA       NA            NA            NA
-Kleinzee            0.01         0       NA            NA            NA
-Lambert's Bay       0.00         0        0            NA            NA
-Pelican Point       0.00         0        0             0            NA
+# Show only the useful summary columns, excluding the 1,000 replicate columns.
+FST_confidence_intervals <- bootstrap_results[, c(
+  "Population1",
+  "Population2",
+  "Fst",
+  "Lower bound CI limit",
+  "Upper bound CI limit",
+  "p-value"
+)]
 
-#HDW (have not done) ####
+FST_confidence_intervals
 
-# Read the VCF file
-if (!require("vcfR", quietly = TRUE))
-  install.packages("vcfR")
-library(vcfR)
+# ==============================================================
+#   Correct for multiple comparisons
+# ==============================================================
+# Extract the raw pairwise P-values.
+FST_pvalues_raw <- stamppFst_values$Pvalues
+#FST_pvalues_raw <- stamppFst_values[["Pvalues"]]
+#FST_pvalues_raw
+#View(FST_pvalues_raw)
 
-#Check full to see if same as Populations
-#data <- read.vcf("/Users/Charlotte/Documents/Stellenbosch_University/Masters/Bioinformatics/populations_outputs_92.nosync/populations.snps.vcf")
-populations.snps.vcf <- read.vcf("populations.snps.vcf")
-populations.snps.vcfR <- read.vcfR("populations.snps.vcf")
+# Identify the ten cells containing comparisons (exclude NAs)
+tested_pairs <- !is.na(FST_pvalues_raw)
+tested_pairs
 
-# Convert VCF to genotype matrix
-if (!require("adegenet", quietly = TRUE))
-  install.packages("adegenet")
-library(adegenet)
+# Copy the matrix and correct those ten P-values.
+FST_pvalues_holm <- FST_pvalues_raw
+FST_pvalues_holm #still orginal
+FST_pvalues_holm[tested_pairs] <- p.adjust(
+  FST_pvalues_raw[tested_pairs],
+  method = "holm"
+)
 
-#.gen file was unavailable so I used the vcf
-genind_full <- vcfR2genind(populations.snps.vcfR)
+cat("Raw P-values:\n")
+FST_pvalues_raw
 
-# Perform HWE test on the genind object using the `pegas` package
-if (!require("pegas", quietly = TRUE))
-  install.packages("pegas")
-library(pegas)
+cat("Holm-corrected P-values:\n")
+FST_pvalues_holm
 
-HWE_results <- hw.test(genind_full)
-# Write the data frame to a CSV file
-write.csv(hwe_results, file = "HWE_results_full.csv", row.names = FALSE)
+# Add the FDR corrected p-values back to your data frame 
+stamppFst_values$Holm_P_Value <- FST_pvalues_holm
 
-#Now Neutral
-#data <- read.vcf("/Users/Charlotte/Documents/Stellenbosch_University/Masters/Bioinformatics/populations_outputs_92.nosync/populations.snps.vcf")
-populations.snps.netural.vcf <- read.vcf("populations.snps.neutral.vcf")
+# Identify significant results
+# You can set your desired significance level (e.g., 0.05) for the FDR-corrected p-values
+alpha_level <- 0.05
+stamppFst_values$Significant_Holm <- stamppFst_values$Holm_P_Value <= alpha_level
 
-if (!require("vcfR", quietly = TRUE))
-  install.packages("vcfR")
-library(vcfR)
+## Remove the incorrectly named FDR fields.
+#stamppFst_values$Significant_FDR <- NULL
+#stamppFst_values$FDR_P_Value <- NULL
 
-populations.snps.netural.vcfR <- read.vcfR("populations.snps.neutral.vcf")
+# Check the remaining fields.
+#names(stamppFst_values)
+#print(stamppFst_values)
 
-populations.snps.netural.vcfR <- read.vcfR("~/msc/00_info/populations.snps.neutral.vcf")
+# View the results 
+# Display the data frame with the new columns
+print(stamppFst_values)
 
-# Convert VCF to genotype matrix
-if (!require("adegenet", quietly = TRUE))
-  install.packages("adegenet")
-library(adegenet)
+#$Fsts
+#              Cape Cross     False Bay        Kleinzee Lambert's Bay Pelican Point
+#Cape Cross                NA            NA              NA            NA            NA
+#False Bay     -0.00001077735            NA              NA            NA            NA
+#Kleinzee      -0.00007377278  0.0001872277              NA            NA            NA
+#Lambert's Bay  0.00041168711 -0.0001392380  0.000360941768            NA            NA
+#Pelican Point  0.00009720389  0.0003591899 -0.000003402574  0.0003114581            NA
+#
+#$Pvalues
+#Cape Cross False Bay Kleinzee Lambert's Bay Pelican Point
+#Cape Cross            NA        NA       NA            NA            NA
+#False Bay          0.532        NA       NA            NA            NA
+#Kleinzee           0.611     0.240       NA            NA            NA
+#Lambert's Bay      0.036     0.712    0.074            NA            NA
+#Pelican Point      0.327     0.077    0.461         0.097            NA
+#
+#$Bootstraps
+#Population1 Population2 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48
+#49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98
+#[ reached 'max' / getOption("max.print") -- omitted 906 columns ]
+#[ reached 'max' / getOption("max.print") -- omitted 10 rows ]
+#
+#$Holm_P_Value
+#Cape Cross False Bay Kleinzee Lambert's Bay Pelican Point
+#Cape Cross            NA        NA       NA            NA            NA
+#False Bay           1.00        NA       NA            NA            NA
+#Kleinzee            1.00     1.000       NA            NA            NA
+#Lambert's Bay       0.36     1.000    0.666            NA            NA
+#Pelican Point       1.00     0.666    1.000         0.679            NA
+#
+#$Significant_Holm
+#Cape Cross False Bay Kleinzee Lambert's Bay Pelican Point
+#Cape Cross            NA        NA       NA            NA            NA
+#False Bay          FALSE        NA       NA            NA            NA
+#Kleinzee           FALSE     FALSE       NA            NA            NA
+#Lambert's Bay      FALSE     FALSE    FALSE            NA            NA
+#Pelican Point      FALSE     FALSE    FALSE         FALSE            NA
 
-#.gen file was unavailable so I used the vcf
-genind_neutral <- vcfR2genind(populations.snps.netural.vcfR)
+#no FST comparisons are statistically significant
 
-# Perform HWE test on the genind object using the `pegas` package
-if (!require("pegas", quietly = TRUE))
-  install.packages("pegas")
-library(pegas)
+# Export the results to a new CSV file 
+#this wont work becaue stamppFst_values is a list containing several differently shaped tables, so it cannot be written directly as one CSV. 
+#write.csv(stamppFst_values, "stampp_fst_results_with_holm_correction_full.csv", row.names = FALSE)
+#Create one row per population comparison instaed 
 
-HWE_results_netural <- hw.test(genind_neutral)
-# Write the data frame to a CSV file
+# Avoid scientific notation.
+options(scipen = 999)
 
-write.csv(hwe_results_neutral, file = "HWE_results_neutral.csv", row.names = FALSE)
---> Run in hpc
+# Locate the ten pairwise comparisons.
+tested_pairs <- !is.na(stamppFst_values$Pvalues)
+positions <- which(tested_pairs, arr.ind = TRUE)
 
+# Combine the relevant results into one table.
+fst_results <- data.frame(
+  Population_1 = rownames(stamppFst_values$Pvalues)[positions[, 1]],
+  Population_2 = colnames(stamppFst_values$Pvalues)[positions[, 2]],
+  FST = stamppFst_values$Fsts[positions],
+  Raw_P_value = stamppFst_values$Pvalues[positions],
+  Holm_P_value = stamppFst_values$Holm_P_Value[positions],
+  Significant_Holm = stamppFst_values$Significant_Holm[positions]
+)
+
+print(fst_results)
+
+#Population_1  Population_2             FST Raw_P_value Holm_P_value Significant_Holm
+#1      False Bay    Cape Cross -0.000010777349       0.532        1.000            FALSE
+#2       Kleinzee    Cape Cross -0.000073772779       0.611        1.000            FALSE
+#3  Lambert's Bay    Cape Cross  0.000411687109       0.036        0.360            FALSE
+#4  Pelican Point    Cape Cross  0.000097203886       0.327        1.000            FALSE
+#5       Kleinzee     False Bay  0.000187227713       0.240        1.000            FALSE
+#6  Lambert's Bay     False Bay -0.000139238043       0.712        1.000            FALSE
+#7  Pelican Point     False Bay  0.000359189851       0.077        0.666            FALSE
+#8  Lambert's Bay      Kleinzee  0.000360941768       0.074        0.666            FALSE
+#9  Pelican Point      Kleinzee -0.000003402574       0.461        1.000            FALSE
+#10 Pelican Point Lambert's Bay  0.000311458141       0.097        0.679            FALSE
+
+write.csv(
+  fst_results,
+  "stampp_fst_results_with_holm_correction_neutral.csv",
+  row.names = FALSE
+)
 
 
